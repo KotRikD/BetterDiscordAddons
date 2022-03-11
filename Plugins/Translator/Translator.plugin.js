@@ -1,8 +1,8 @@
 /**
- * @name Translator
- * @author DevilBro
+ * @name Translator (Better Translator with Yandex.Cloud implementation)
+ * @author DevilBro & KotRik
  * @authorId 278543574059057154
- * @version 2.3.6
+ * @version 2.4.0
  * @description Allows you to translate Messages and your outgoing Messages within Discord
  * @invite Jx3TjNS
  * @donate https://www.paypal.me/MircoWittrien
@@ -16,8 +16,8 @@ module.exports = (_ => {
 	const config = {
 		"info": {
 			"name": "Translator",
-			"author": "DevilBro",
-			"version": "2.3.6",
+			"author": "DevilBro & KotRik",
+			"version": "2.4.0",
 			"description": "Allows you to translate Messages and your outgoing Messages within Discord"
 		}
 	};
@@ -295,11 +295,11 @@ module.exports = (_ => {
 				key: "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"
 			},
 			yandex: {
-				name: "Yandex",
+				name: "Yandex.Cloud",
 				auto: true,
 				funcName: "yandexTranslate",
 				languages: ["af","am","ar","az","ba","be","bg","bn","bs","ca","ceb","cs","cy","da","de","el","en","eo","es","et","eu","fa","fi","fr","ga","gd","gl","gu","he","hi","hr","ht","hu","hy","id","is","it","ja","jv","ka","kk","km","kn","ko","ky","la","lb","lo","lt","lv","mg","mhr","mi","mk","ml","mn","mr","ms","mt","my","ne","nl","no","pa","pap","pl","pt","ro","ru","si","sk","sl","sq","sr","su","sv","sw","ta","te","tg","th","tl","tr","tt","udm","uk","ur","uz","vi","xh","yi","zh"],
-				key: "trnsl.x.x.xxxxxxxxxxxxxxxx.xxxxxxxxxxxxxxxx.xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"
+				key: "t1.xxxxxxxxxxxxxxxxxxxxx xxxxxxxxxxxxxxxxxxxx",
 			},
 			papago: {
 				name: "Papago",
@@ -1038,33 +1038,64 @@ module.exports = (_ => {
 			}
 			
 			yandexTranslate (data, callback) {
-				BDFDB.LibraryRequires.request(`https://translate.yandex.net/api/v1.5/tr/translate?key=${authKeys.yandex && authKeys.yandex.key || "trnsl.1.1.20191206T223907Z.52bd512eca953a5b.1ec123ce4dcab3ae859f312d27cdc8609ab280de"}&text=${encodeURIComponent(data.text)}&lang=${data.specialCase || data.input.auto ? data.output.id : (data.input.id + "-" + data.output.id)}&options=1`, (error, response, body) => {
-					if (!error && body && response.statusCode == 200) {
+				const dropWithEmptyError = () => {
+					BDFDB.NotificationUtils.toast(`${this.labels.toast_translating_failed}. IAM token and folderId is empty.`, {
+						type: "danger",
+						position: "center"
+					});
+					callback("");
+					return;
+				}
+
+				if (!(authKeys.yandex && authKeys.yandex.key)) {
+					dropWithEmptyError();
+					return;
+				}
+
+				const [
+					iam_token,
+					folder_id
+				] = authKeys.yandex.key.split(" ");
+
+				if (!iam_token || !folder_id) {
+					dropWithEmptyError();
+					return;
+				}
+
+				BDFDB.LibraryRequires.request.post({
+					url: "https://translate.api.cloud.yandex.net/translate/v2/translate",
+					headers: {
+						"Authorization": `Bearer ${iam_token}`
+					},
+					body: JSON.stringify({
+						sourceLanguageCode: data.input.id === "auto" ? "" : data.input.id,
+						targetLanguageCode: data.output.id,
+						texts: data.text,
+						format: "PLAIN_TEXT",
+   						folderId: folder_id
+					})
+				}, (error, response, body) => {
+					if (!error && response && response.statusCode == 200) {
 						try {
-							body = BDFDB.DOMUtils.create(body);
-							let translation = body.querySelector("text");
-							let detected = body.querySelector("detected");
-							if (translation && detected) {
-								let detectedLang = detected.getAttribute("lang");
-								if (!data.specialCase && detectedLang && languages[detectedLang]) {
-									data.input.name = languages[detectedLang].name;
-									data.input.ownlang = languages[detectedLang].ownlang;
-								}
-								callback(translation.innerText);
+							body = JSON.parse(body);
+							if ('translations' in body && body.translations.length) {
+								callback(body.translations[0].text)
+								return;
 							}
-							else callback("");
+							callback("");
 						}
 						catch (err) {callback("");}
 					}
-					else if (body && body.indexOf('code="408"') > -1) {
-						BDFDB.NotificationUtils.toast(`${this.labels.toast_translating_failed}. ${this.labels.toast_translating_tryanother}. Monthly Request Limit reached.`, {
+					else {
+						if (response.statusCode == 429) BDFDB.NotificationUtils.toast(`${this.labels.toast_translating_failed}. ${this.labels.toast_translating_tryanother}. Request Limit reached.`, {
 							type: "danger",
 							position: "center"
 						});
-						callback("");
-					}
-					else {
-						BDFDB.NotificationUtils.toast(`${this.labels.toast_translating_failed}. ${this.labels.toast_translating_tryanother}. Translation Server down or API-Key outdated.`, {
+						else if (response.statusCode == 403) BDFDB.NotificationUtils.toast(`${this.labels.toast_translating_failed}. ${this.labels.toast_translating_tryanother}. API-Key outdated.`, {
+							type: "danger",
+							position: "center"
+						});
+						else BDFDB.NotificationUtils.toast(`${this.labels.toast_translating_failed}. ${this.labels.toast_translating_tryanother}. Translation Server might be down.`, {
 							type: "danger",
 							position: "center"
 						});
